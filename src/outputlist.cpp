@@ -1,12 +1,12 @@
 /******************************************************************************
  *
- * 
+ *
  *
  * Copyright (C) 1997-2015 by Dimitri van Heesch.
  *
  * Permission to use, copy, modify, and distribute this software and its
- * documentation under the terms of the GNU General Public License is hereby 
- * granted. No representations are made about the suitability of this software 
+ * documentation under the terms of the GNU General Public License is hereby
+ * granted. No representations are made about the suitability of this software
  * for any purpose. It is provided "as is" without express or implied warranty.
  * See the GNU General Public License for more details.
  *
@@ -22,6 +22,8 @@
  *  the call to all output generators.
  */
 
+#include <atomic>
+
 #include "outputlist.h"
 #include "outputgen.h"
 #include "config.h"
@@ -29,331 +31,362 @@
 #include "definition.h"
 #include "docparser.h"
 #include "vhdldocgen.h"
+#include "doxygen.h"
 
-OutputList::OutputList(bool)
+static AtomicInt g_outId;
+
+OutputList::OutputList()
 {
-  //printf("OutputList::OutputList()\n");
-  m_outputs.setAutoDelete(TRUE);
+  newId();
+  m_codeGenList.setId(m_id);
 }
 
-OutputList::~OutputList()
+OutputList::OutputList(const OutputList &ol) : m_outputGenList(ol.m_outputGenList)
 {
-  //printf("OutputList::~OutputList()\n");
+  m_id = ol.m_id;
+  refreshCodeGenerators();
 }
 
-void OutputList::add(const OutputGenerator *og)
+OutputList &OutputList::operator=(const OutputList &ol)
 {
-  if (og) m_outputs.append(og);
-}
-
-void OutputList::disableAllBut(OutputGenerator::OutputType o)
-{
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  if (this!=&ol)
   {
-    og->disableIfNot(o);
+    m_id = ol.m_id;
+    m_outputGenList = ol.m_outputGenList;
+    refreshCodeGenerators();
   }
+  return *this;
+}
+
+void OutputList::refreshCodeGenerators()
+{
+  m_codeGenList.clear();
+  for (auto &e : m_outputGenList)
+  {
+    e.intf->addCodeGen(m_codeGenList);
+  }
+  m_codeGenList.setId(m_id);
+}
+
+void OutputList::newId()
+{
+  m_id = ++g_outId;
+}
+
+void OutputList::syncEnabled()
+{
+  for (const auto &e : m_outputGenList)
+  {
+    //printf("output %d isEnabled=%d\n",og->type(),og->isEnabled());
+    m_codeGenList.setEnabledFiltered(e.intf->type(),e.enabled);
+  }
+}
+
+void OutputList::disableAllBut(OutputType o)
+{
+  //printf("disableAllBut(%d)\n",o);
+  for (auto &e : m_outputGenList)
+  {
+    if (e.intf->type()!=o) e.setEnabled(false);
+  }
+  syncEnabled();
 }
 
 void OutputList::enableAll()
 {
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  //printf("enableAll()\n");
+  for (auto &e : m_outputGenList)
   {
-    og->enable();
+    e.setEnabled(true);
   }
+  syncEnabled();
 }
 
 void OutputList::disableAll()
 {
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  //printf("enableAll()\n");
+  for (auto &e : m_outputGenList)
   {
-    og->disable();
+    e.setEnabled(false);
   }
+  syncEnabled();
 }
 
-void OutputList::disable(OutputGenerator::OutputType o)
+void OutputList::disable(OutputType o)
 {
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  //printf("disable(%d)\n",o);
+  for (auto &e : m_outputGenList)
   {
-    og->disableIf(o);
+    if (e.intf->type()==o) e.setEnabled(false);
   }
+  syncEnabled();
 }
 
-void OutputList::enable(OutputGenerator::OutputType o)
+void OutputList::enable(OutputType o)
 {
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  //printf("enable(%d)\n",o);
+  for (auto &e : m_outputGenList)
   {
-    og->enableIf(o);
+    if (e.intf->type()==o) e.setEnabled(true);
   }
+  syncEnabled();
 }
 
-bool OutputList::isEnabled(OutputGenerator::OutputType o)
+bool OutputList::isEnabled(OutputType o)
 {
-  bool result=FALSE;
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  for (const auto &e : m_outputGenList)
   {
-    result=result || og->isEnabled(o);
+    if (e.intf->type()==o) { return e.enabled; }
   }
-  return result;
+  return false;
 }
 
 void OutputList::pushGeneratorState()
 {
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  //printf("pushGeneratorState()\n");
+  for (auto &e : m_outputGenList)
   {
-    og->pushGeneratorState();
+    e.enabledStack.push(e.enabled);
   }
+  syncEnabled();
 }
 
 void OutputList::popGeneratorState()
 {
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  //printf("popGeneratorState()\n");
+  for (auto &e : m_outputGenList)
   {
-    og->popGeneratorState();
+    if (!e.enabledStack.empty())
+    {
+      e.enabled = e.enabledStack.top();
+      e.enabledStack.pop();
+    }
   }
+  syncEnabled();
 }
 
-bool OutputList::generateDoc(const char *fileName,int startLine,
-                  Definition *ctx,MemberDef * md,
-                  const QCString &docStr,bool indexWords,
-                  bool isExample,const char *exampleName,
-                  bool singleLine,bool linkFromIndex)
+void OutputList::generateDoc(const QCString &fileName,int startLine,
+                  const Definition *ctx,const MemberDef * md,
+                  const QCString &docStr,const DocOptions &options)
 {
-  int count=0;
-  if (docStr.isEmpty()) return TRUE;
+  if (docStr.isEmpty()) return;
 
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
-  {
-    if (og->isEnabled()) count++;
-  }
-  if (count==0) return TRUE; // no output formats enabled.
-
-  DocRoot *root=0;
-  root = validatingParseDoc(fileName,startLine,
-                            ctx,md,docStr,indexWords,isExample,exampleName,
-                            singleLine,linkFromIndex);
-
-  writeDoc(root,ctx,md);
-
-  bool isEmpty = root->isEmpty();
-
-  delete root;
-
-  return isEmpty;
+  auto count=std::count_if(m_outputGenList.begin(),m_outputGenList.end(),
+                           [](const auto &e) { return e.enabled; });
+  // we want to validate irrespective of the number of output formats
+  // specified as:
+  // - when only XML format there should be warnings as well (XML has its own write routines)
+  // - no formats there should be warnings as well
+  auto parser { createDocParser() };
+  auto ast    { validatingParseDoc(*parser.get(),
+                                   fileName,
+                                   startLine,
+                                   ctx,
+                                   md,
+                                   docStr,
+                                   options)
+               };
+  if (ast && count>0) writeDoc(ast.get(),ctx,md,options.sectionLevel());
 }
 
-void OutputList::writeDoc(DocRoot *root,Definition *ctx,MemberDef *md)
+void OutputList::startFile(const QCString &name,bool isSource,const QCString &manName,const QCString &title, int hierarchyLevel)
 {
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
-  {
-    //printf("og->printDoc(extension=%s)\n",
-    //    ctx?ctx->getDefFileExtension().data():"<null>");
-    if (og->isEnabled()) og->writeDoc(root,ctx,md);
-  }
-  VhdlDocGen::setFlowMember(0);
+  newId();
+  m_codeGenList.setId(m_id);
+  foreach(&OutputGenIntf::startFile,name,isSource,manName,title,m_id,hierarchyLevel);
 }
 
-bool OutputList::parseText(const QCString &textStr)
+void OutputList::parseText(const QCString &textStr)
 {
-  int count=0;
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
-  {
-    if (og->isEnabled()) count++;
-  }
-  if (count==0) return TRUE; // no output formats enabled.
 
-  DocText *root = validatingParseText(textStr);
+  auto count=std::count_if(m_outputGenList.begin(),m_outputGenList.end(),
+                           [](const auto &e) { return e.enabled; });
 
-  for (it.toFirst();(og=it.current());++it)
-  {
-    if (og->isEnabled()) og->writeDoc(root,0,0);
-  }
+  // we want to validate irrespective of the number of output formats
+  // specified as:
+  // - when only XML format there should be warnings as well (XML has its own write routines)
+  // - no formats there should be warnings as well
+  auto parser { createDocParser() };
+  auto ast { validatingParseText(*parser.get(), textStr) };
 
-  bool isEmpty = root->isEmpty();
-
-  delete root;
-
-  return isEmpty;
+  if (ast && count>0) writeDoc(ast.get(),nullptr,nullptr);
 }
-
 
 //--------------------------------------------------------------------------
-// Create some overloaded definitions of the forall function.
-// Using template functions here would have made it a little less
-// portable (I guess).
 
-// zero arguments
-void OutputList::forall(void (OutputGenerator::*func)())
+void OutputCodeRecorder::startNewLine(int lineNr)
 {
-  QListIterator<OutputGenerator> it(m_outputs);
-  OutputGenerator *og;
-  for (it.toFirst();(og=it.current());++it)
+  int orgSize = static_cast<int>(m_lineOffset.size());
+  if (orgSize<lineNr)
   {
-    if (og->isEnabled()) (og->*func)();
+    m_lineOffset.resize(lineNr);
+    for (int i=orgSize;i<lineNr;i++) // output lines can be skipped due to hidden comments so fill in the gap
+    {
+      //printf("%p: startCodeLine(%d) offset=%zu\n",(void*)this,i,m_calls.size());
+      m_lineOffset[i]=m_calls.size();
+    }
   }
 }
 
-// one argument
-#define FORALL1(a1,p1)                                        \
-void OutputList::forall(void (OutputGenerator::*func)(a1),a1) \
-{                                                             \
-  QListIterator<OutputGenerator> it(m_outputs);               \
-  OutputGenerator *og;                                        \
-  for (it.toFirst();(og=it.current());++it)                   \
-  {                                                           \
-    if (og->isEnabled()) (og->*func)(p1);                     \
-  }                                                           \
+void OutputCodeRecorder::codify(const QCString &s)
+{
+  m_calls.emplace_back([]() { return true; },
+                       [=](OutputCodeList *ol) { ol->codify(s); },
+                       m_insideSpecialComment
+                      );
 }
 
-// two arguments
-#define FORALL2(a1,a2,p1,p2)                                        \
-void OutputList::forall(void (OutputGenerator::*func)(a1,a2),a1,a2) \
-{                                                                   \
-  QListIterator<OutputGenerator> it(m_outputs);                     \
-  OutputGenerator *og;                                              \
-  for (it.toFirst();(og=it.current());++it)                         \
-  {                                                                 \
-    if (og->isEnabled()) (og->*func)(p1,p2);                        \
-  }                                                                 \
+void OutputCodeRecorder::startSpecialComment()
+{
+  m_insideSpecialComment=true;
+  m_calls.emplace_back([]() { return true; },
+                       [=](OutputCodeList *ol) { ol->startSpecialComment(); },
+                       true
+                      );
 }
 
-// three arguments
-#define FORALL3(a1,a2,a3,p1,p2,p3)                                        \
-void OutputList::forall(void (OutputGenerator::*func)(a1,a2,a3),a1,a2,a3) \
-{                                                                         \
-  QListIterator<OutputGenerator> it(m_outputs);                           \
-  OutputGenerator *og;                                                    \
-  for (it.toFirst();(og=it.current());++it)                               \
-  {                                                                       \
-    if (og->isEnabled()) (og->*func)(p1,p2,p3);                           \
-  }                                                                       \
+void OutputCodeRecorder::endSpecialComment()
+{
+  m_calls.emplace_back([]() { return true; },
+                       [=](OutputCodeList *ol) { ol->endSpecialComment(); },
+                       true
+                      );
+  m_insideSpecialComment=false;
 }
 
-// four arguments
-#define FORALL4(a1,a2,a3,a4,p1,p2,p3,p4)                                        \
-void OutputList::forall(void (OutputGenerator::*func)(a1,a2,a3,a4),a1,a2,a3,a4) \
-{                                                                               \
-  QListIterator<OutputGenerator> it(m_outputs);                                 \
-  OutputGenerator *og;                                                          \
-  for (it.toFirst();(og=it.current());++it)                                     \
-  {                                                                             \
-    if (og->isEnabled()) (og->*func)(p1,p2,p3,p4);                              \
-  }                                                                             \
+void OutputCodeRecorder::writeCodeLink(CodeSymbolType type,
+                   const QCString &ref,const QCString &file,
+                   const QCString &anchor,const QCString &name,
+                   const QCString &tooltip)
+{
+  m_calls.emplace_back([](){ return true; },
+                       [=](OutputCodeList *ol) { ol->writeCodeLink(type,ref,file,anchor,name,tooltip); },
+                       m_insideSpecialComment
+                      );
 }
 
-// five arguments
-#define FORALL5(a1,a2,a3,a4,a5,p1,p2,p3,p4,p5)                                        \
-void OutputList::forall(void (OutputGenerator::*func)(a1,a2,a3,a4,a5),a1,a2,a3,a4,a5) \
-{                                                                                     \
-  QListIterator<OutputGenerator> it(m_outputs);                                       \
-  OutputGenerator *og;                                                                \
-  for (it.toFirst();(og=it.current());++it)                                           \
-  {                                                                                   \
-    if (og->isEnabled()) (og->*func)(p1,p2,p3,p4,p5);                                 \
-  }                                                                                   \
+void OutputCodeRecorder::writeLineNumber(const QCString &ref,const QCString &file,const QCString &anchor,
+                     int lineNumber, bool writeLineAnchor)
+{
+  startNewLine(lineNumber);
+  m_calls.emplace_back([&]() { return m_showLineNumbers; },
+                       [=](OutputCodeList *ol) { ol->writeLineNumber(ref,file,anchor,lineNumber,writeLineAnchor); },
+                       m_insideSpecialComment
+                      );
 }
 
-// six arguments
-#define FORALL6(a1,a2,a3,a4,a5,a6,p1,p2,p3,p4,p5,p6)                                  \
-void OutputList::forall(void (OutputGenerator::*func)(a1,a2,a3,a4,a5,a6),a1,a2,a3,a4,a5,a6) \
-{                                                                                     \
-  QListIterator<OutputGenerator> it(m_outputs);                                       \
-  OutputGenerator *og;                                                                \
-  for (it.toFirst();(og=it.current());++it)                                           \
-  {                                                                                   \
-    if (og->isEnabled()) (og->*func)(p1,p2,p3,p4,p5,p6);                              \
-  }                                                                                   \
+void OutputCodeRecorder::writeTooltip(const QCString &id, const DocLinkInfo &docInfo, const QCString &decl,
+                  const QCString &desc, const SourceLinkInfo &defInfo, const SourceLinkInfo &declInfo)
+{
+  m_calls.emplace_back([](){ return true; },
+                       [=](OutputCodeList *ol) { ol->writeTooltip(id,docInfo,decl,desc,defInfo,declInfo); },
+                       m_insideSpecialComment
+                      );
 }
 
-// seven arguments
-#define FORALL7(a1,a2,a3,a4,a5,a6,a7,p1,p2,p3,p4,p5,p6,p7)                      \
-void OutputList::forall(void (OutputGenerator::*func)(a1,a2,a3,a4,a5,a6,a7),a1,a2,a3,a4,a5,a6,a7) \
-{                                                                                     \
-  QListIterator<OutputGenerator> it(m_outputs);                                       \
-  OutputGenerator *og;                                                                \
-  for (it.toFirst();(og=it.current());++it)                                           \
-  {                                                                                   \
-    if (og->isEnabled()) (og->*func)(p1,p2,p3,p4,p5,p6,p7);                           \
-  }                                                                                   \
+void OutputCodeRecorder::startCodeLine(int lineNr)
+{
+  startNewLine(lineNr);
+  m_calls.emplace_back([](){ return true; },
+                       [=](OutputCodeList *ol) { ol->startCodeLine(lineNr); },
+                       m_insideSpecialComment
+                      );
 }
 
-
-// eight arguments
-#define FORALL8(a1,a2,a3,a4,a5,a6,a7,a8,p1,p2,p3,p4,p5,p6,p7,p8)                      \
-void OutputList::forall(void (OutputGenerator::*func)(a1,a2,a3,a4,a5,a6,a7,a8),a1,a2,a3,a4,a5,a6,a7,a8) \
-{                                                                                     \
-  QListIterator<OutputGenerator> it(m_outputs);                                       \
-  OutputGenerator *og;                                                                \
-  for (it.toFirst();(og=it.current());++it)                                           \
-  {                                                                                   \
-    if (og->isEnabled()) (og->*func)(p1,p2,p3,p4,p5,p6,p7,p8);                        \
-  }                                                                                   \
+void OutputCodeRecorder::endCodeLine()
+{
+  m_calls.emplace_back([](){ return true; },
+                       [=](OutputCodeList *ol) { ol->endCodeLine(); },
+                       m_insideSpecialComment
+                      );
 }
 
-// now instantiate only the ones we need.
+void OutputCodeRecorder::startFontClass(const QCString &c)
+{
+  m_calls.emplace_back([]() { return true; },
+                       [=](OutputCodeList *ol) { ol->startFontClass(c); },
+                       m_insideSpecialComment
+                      );
+}
 
-FORALL1(const char *a1,a1)
-FORALL1(char a1,a1)
-FORALL1(int a1,a1)
-FORALL1(const DotClassGraph &a1,a1)
-FORALL1(const DotInclDepGraph &a1,a1)
-FORALL1(const DotCallGraph &a1,a1)
-FORALL1(const DotDirDeps &a1,a1)
-FORALL1(const DotGfxHierarchyTable &a1,a1)
-FORALL1(const DotGroupCollaboration &a1,a1)
-FORALL1(SectionTypes a1,a1)
-#if defined(HAS_BOOL_TYPE) || defined(Q_HAS_BOOL_TYPE)
-FORALL1(bool a1,a1)
-FORALL2(bool a1,int a2,a1,a2)
-FORALL2(bool a1,bool a2,a1,a2)
-FORALL2(const char *a1,bool a2,a1,a2)
-FORALL4(const char *a1,const char *a2,const char *a3,bool a4,a1,a2,a3,a4)
-#endif
-FORALL2(int a1,bool a2,a1,a2)
-FORALL2(bool a1,const char *a2,a1,a2)
-FORALL2(ParamListTypes a1,const char *a2,a1,a2)
-FORALL1(IndexSections a1,a1)
-FORALL2(const char *a1,const char *a2,a1,a2)
-FORALL2(const char *a1,int a2,a1,a2)
-FORALL2(const char *a1,SectionInfo::SectionType a2,a1,a2)
-FORALL3(bool a1,HighlightedItem a2,const char *a3,a1,a2,a3)
-FORALL3(bool a1,bool a2,bool a3,a1,a2,a3)
-FORALL3(const ClassDiagram &a1,const char *a2,const char *a3,a1,a2,a3)
-FORALL3(const char *a1,const char *a2,const char *a3,a1,a2,a3)
-FORALL3(const char *a1,const char *a2,bool a3,a1,a2,a3)
-FORALL3(const char *a1,int a2,const char *a3,a1,a2,a3)
-FORALL3(const char *a1,const char *a2,SectionInfo::SectionType a3,a1,a2,a3)
-FORALL3(uchar a1,uchar a2,uchar a3,a1,a2,a3)
-FORALL3(Definition *a1,const char *a2,bool a3,a1,a2,a3)
-FORALL4(SectionTypes a1,const char *a2,const char *a3,const char *a4,a1,a2,a3,a4)
-FORALL4(const char *a1,const char *a2,const char *a3,const char *a4,a1,a2,a3,a4)
-FORALL4(const char *a1,const char *a2,const char *a3,int a4,a1,a2,a3,a4)
-FORALL5(const char *a1,const char *a2,const char *a3,const char *a4,const char *a5,a1,a2,a3,a4,a5)
-FORALL5(const char *a1,const char *a2,const char *a3,const char *a4,bool a5,a1,a2,a3,a4,a5)
-FORALL6(const char *a1,const char *a2,const char *a3,const char *a4,const char *a5,const char *a6,a1,a2,a3,a4,a5,a6)
-FORALL6(const char *a1,const DocLinkInfo &a2,const char *a3,const char *a4,const SourceLinkInfo &a5,const SourceLinkInfo &a6,a1,a2,a3,a4,a5,a6)
-FORALL7(const char *a1,const char *a2,const char *a3,const char *a4,int a5,int a6,bool a7,a1,a2,a3,a4,a5,a6,a7)
+void OutputCodeRecorder::endFontClass()
+{
+  m_calls.emplace_back([]() { return true; },
+                       [=](OutputCodeList *ol){ ol->endFontClass(); },
+                       m_insideSpecialComment
+                      );
+}
 
+void OutputCodeRecorder::writeCodeAnchor(const QCString &name)
+{
+  m_calls.emplace_back([]() { return true; },
+                       [=](OutputCodeList *ol){ ol->writeCodeAnchor(name); },
+                       m_insideSpecialComment
+                      );
+}
 
-//--------------------------------------------------------------------------
+void OutputCodeRecorder::startCodeFragment(const QCString &style)
+{
+}
+
+void OutputCodeRecorder::endCodeFragment(const QCString &style)
+{
+}
+
+void OutputCodeRecorder::startFold(int lineNr,const QCString &startMarker,const QCString &endMarker)
+{
+  m_calls.emplace_back([]() { return true; },
+                       [=](OutputCodeList *ol) { ol->startFold(lineNr,startMarker,endMarker); },
+                       m_insideSpecialComment
+                      );
+}
+
+void OutputCodeRecorder::endFold()
+{
+  m_calls.emplace_back([]() { return true; },
+                       [=](OutputCodeList *ol) { ol->endFold(); },
+                       m_insideSpecialComment
+                      );
+}
+
+void OutputCodeRecorder::replay(OutputCodeList &ol,int startLine,int endLine,bool showLineNumbers,bool
+    stripCodeComments,size_t stripIndentAmount)
+{
+  size_t startIndex = startLine>0 && startLine<=(int)m_lineOffset.size() ? m_lineOffset[startLine-1] : 0;
+  size_t endIndex   = endLine>0   && endLine  <=(int)m_lineOffset.size() ? m_lineOffset[  endLine-1] : m_calls.size();
+  //printf("startIndex=%zu endIndex=%zu\n",startIndex,endIndex);
+
+  // configure run time properties of the rendering
+  ol.stripCodeComments(stripCodeComments);
+  ol.setStripIndentAmount(stripIndentAmount);
+  m_showLineNumbers = showLineNumbers;
+
+  bool insideSpecialComment = false;
+  // in case the start of the special comment marker is outside of the fragment, start it here
+  if (startIndex<endIndex && m_calls[startIndex].insideSpecialComment)
+  {
+    ol.startSpecialComment();
+    insideSpecialComment = true;
+  }
+
+  // render the requested fragment of the pre-recorded output
+  for (size_t i=startIndex; i<endIndex; i++)
+  {
+    if (m_calls[i].condition())
+    {
+      insideSpecialComment = m_calls[i].insideSpecialComment;
+      m_calls[i].function(&ol);
+    }
+  }
+
+  // if we end the fragment inside a special comment, make sure we end it,
+  // and also the code line
+  if (insideSpecialComment)
+  {
+    ol.endSpecialComment();
+    ol.endCodeLine();
+  }
+
+  ol.stripCodeComments(false);
+  ol.setStripIndentAmount(0);
+}

@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#!/usr/bin/env python
 from xml.etree import cElementTree as ET
 import os
 import sqlite3
@@ -6,17 +6,17 @@ import sys
 import getopt
 
 # map XML attributes/elements to SQL rows
-# --POC: iterate through the children and attributes of the memberdef elelement
+# --POC: iterate through the children and attributes of the memberdef element
 #        and search it in doxygen_sqlite3.db
 
 g_conn=None
 val=[]
 def print_unprocessed_attributes(node):
     for key in node.attrib:
-        print "WARNING: '%s' has unprocessed attr '%s'" % (node.tag,key)
+        print("WARNING: '%s' has unprocessed attr '%s'" % (node.tag,key))
 
 def extract_attribute(node,attribute,pnl):
-    if not attribute in node.attrib:
+    if attribute not in node.attrib:
         return
     pnl.append("%s = ?" % attribute)
     val.append(node.attrib[attribute])
@@ -24,7 +24,7 @@ def extract_attribute(node,attribute,pnl):
 
 def extract_element(node,chld,pnl):
     # deal with <tag />
-    if chld.text == None:
+    if chld.text is None:
         if len(chld.attrib)==0:
             node.remove(chld)
         return
@@ -69,7 +69,7 @@ def process_memberdef(node):
             extract_element(node,chld,q)
 
     for chld in node.getchildren():
-        print "WARNING: '%s' has unprocessed child elem '%s'" % (node.tag,chld.tag)
+        print("WARNING: '%s' has unprocessed child elem '%s'" % (node.tag,chld.tag))
 
     extract_attribute(node,"kind",q)
     extract_attribute(node,"prot",q)
@@ -90,12 +90,12 @@ def process_memberdef(node):
     r=[]
     try:
         r = g_conn.execute(query,val).fetchall()
-    except sqlite3.OperationalError,e:
-        print "SQL_ERROR:%s"%e
+    except(sqlite3.OperationalError,e):
+        print("SQL_ERROR:%s"%e)
 
     del val[:]
     if not len(r) > 0:
-        print "TEST_ERROR: Member not found in SQL DB"
+        print("TEST_ERROR: Member not found in SQL DB")
 
 
 def load_xml(name):
@@ -104,14 +104,14 @@ def load_xml(name):
     for event, elem in context:
         if event == "end" and elem.tag == "memberdef":
             process_memberdef(elem)
-    print "\n== Unprocessed XML =="
+    print("\n== Unprocessed XML ==")
 #    ET.dump(root)
 
 
 def open_db(dbname):
     global g_conn
 
-    if dbname == None:
+    if dbname is None:
         dbname = "doxygen_sqlite3.db"
 
     if not os.path.isfile(dbname):

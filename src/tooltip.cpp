@@ -1,10 +1,10 @@
 /******************************************************************************
  *
- * Copyright (C) 1997-2015 by Dimitri van Heesch.
+ * Copyright (C) 1997-2020 by Dimitri van Heesch.
  *
  * Permission to use, copy, modify, and distribute this software and its
- * documentation under the terms of the GNU General Public License is hereby 
- * granted. No representations are made about the suitability of this software 
+ * documentation under the terms of the GNU General Public License is hereby
+ * granted. No representations are made about the suitability of this software
  * for any purpose. It is provided "as is" without express or implied warranty.
  * See the GNU General Public License for more details.
  *
@@ -13,133 +13,161 @@
  *
  */
 
-#include <qdict.h>
+#include <map>
+#include <memory>
+#include <unordered_map>
+#include <unordered_set>
+#include <string>
+#include <mutex>
 
 #include "tooltip.h"
 #include "definition.h"
-#include "outputgen.h"
+#include "outputlist.h"
 #include "util.h"
 #include "filedef.h"
 #include "doxygen.h"
 #include "config.h"
 #include "verilogdocgen.h"
 
+static std::mutex                                                g_tooltipsFileMutex;
+static std::mutex                                                g_tooltipsTipMutex;
+static std::unordered_map<int, std::unordered_set<std::string> > g_tooltipsWrittenPerFile;
+
 class TooltipManager::Private
 {
   public:
-    Private() : tooltipInfo(10007) {}
-    QDict<Definition> tooltipInfo;
+    std::map<std::string,const Definition*> tooltipInfo;
 };
 
-TooltipManager *TooltipManager::s_theInstance = 0;
-
-TooltipManager::TooltipManager() 
+TooltipManager::TooltipManager() : p(std::make_unique<Private>())
 {
-  p = new Private;
 }
 
 TooltipManager::~TooltipManager()
 {
-  delete p;
 }
 
-TooltipManager *TooltipManager::instance()
-{
-  if (!s_theInstance)
-  {
-    s_theInstance = new TooltipManager;
-  }
-  return s_theInstance;
-}
-
-void TooltipManager::clearTooltips()
-{
-  p->tooltipInfo.clear();
-}
-
-static QCString escapeId(const char *s)
+static QCString escapeId(const QCString &s)
 {
   QCString res=s;
-  char *p=res.rawData();
-  while (*p)
-  {
-    if (!isId(*p)) *p='_';
-    p++;
-  }
+  for (size_t i=0;i<res.length();i++) if (!isId(res[i])) res[i]='_';
   return res;
 }
 
-void TooltipManager::addTooltip(Definition *d)
+void TooltipManager::addTooltip(const Definition *d)
 {
-  static bool sourceTooltips = Config_getBool(SOURCE_TOOLTIPS);
+  bool sourceTooltips = Config_getBool(SOURCE_TOOLTIPS);
   if (!sourceTooltips) return;
+
   QCString id = d->getOutputFileBase();
   int i=id.findRev('/');
   if (i!=-1)
   {
     id = id.right(id.length()-i-1); // strip path (for CREATE_SUBDIRS=YES)
   }
-  id+=escapeId(Doxygen::htmlFileExtension);
+  // In case an extension is present translate this extension to something understood by the tooltip handler
+  // otherwise extend t with a translated htmlFileExtension.
+  QCString currentExtension = getFileNameExtension(id);
+  if (currentExtension.isEmpty())
+  {
+    id += escapeId(Doxygen::htmlFileExtension);
+  }
+  else
+  {
+    id = stripExtensionGeneral(id,currentExtension) + escapeId(currentExtension);
+  }
+
   QCString anc = d->anchor();
   if (!anc.isEmpty())
   {
     id+="_"+anc;
   }
-  if (p->tooltipInfo.find(id)==0)
-  {
-    p->tooltipInfo.insert(id,d);
-  }
+  id = "a" + id;
+  p->tooltipInfo.emplace(id.str(),d);
+  //printf("%p: addTooltip(%s)\n",this,id.data());
 }
 
-void TooltipManager::writeTooltips(CodeOutputInterface &ol)
+void TooltipManager::writeTooltips(OutputCodeList &ol)
 {
-  QDictIterator<Definition> di(p->tooltipInfo);
-  Definition *d;
-  for (di.toFirst();(d=di.current());++di)
+  std::unordered_map<int, std::unordered_set<std::string> >::iterator it;
+  // critical section
   {
-    DocLinkInfo docInfo;
-    docInfo.name   = d->qualifiedName();
-    docInfo.ref    = d->getReference();
-    docInfo.url    = d->getOutputFileBase();
-    docInfo.anchor = d->anchor();
-    SourceLinkInfo defInfo;
-    if (d->getBodyDef() && d->getStartBodyLine()!=-1)
+    std::lock_guard<std::mutex> lock(g_tooltipsFileMutex);
+
+    int id = ol.id();
+    it = g_tooltipsWrittenPerFile.find(id);
+    if (it==g_tooltipsWrittenPerFile.end()) // new file
     {
-      defInfo.file    = d->getBodyDef()->name();
-      defInfo.line    = d->getStartBodyLine();
-      defInfo.url     = d->getSourceFileBase();
-      defInfo.anchor  = d->getSourceAnchor();
+      it = g_tooltipsWrittenPerFile.emplace(id,std::unordered_set<std::string>()).first;
     }
-    SourceLinkInfo declInfo; // TODO: fill in...
-    QCString decl;
-    if (d->definitionType()==Definition::TypeMember)
+  }
+
+  for (const auto &[name,d] : p->tooltipInfo)
+  {
+    bool written = false;
+
+    // critical section
     {
-      MemberDef *md = (MemberDef*)d;
-      QCString s;
-      ClassDef *cl = md->getClassDef();
-      if(cl)
-        s = cl->name();
-      QCString s1 = VerilogDocGen::convertTypeToString(md->getMemberSpecifiers());
-      decl = s1 + " ";
-      QCString d = md->declaration();
-      VerilogDocGen::adjustOpName(d);
-      VerilogDocGen::adjustMemberName(md);
-      decl += d;
-      if(cl)
-        docInfo.name = s + "::" + md->name();
-      if (!decl.isEmpty() && decl.at(0)=='@') // hide enum values
+      std::lock_guard<std::mutex> lock(g_tooltipsTipMutex);
+      written = it->second.find(name)!=it->second.end();
+      if (!written) // only write tooltips once
       {
-        decl.resize(0);
+        it->second.insert(name); // remember we wrote this tooltip for the given file id
       }
     }
-    VerilogDocGen::adjustOpName(decl);
-    ol.writeTooltip(di.currentKey(),                 // id
-                    docInfo,                         // symName
-                    decl,                            // decl
-                    d->briefDescriptionAsTooltip(),  // desc
-                    defInfo,
-                    declInfo
-                   );
+
+    if (!written)
+    {
+      // TODO: - Tang - Figure out this critical section
+      // MemberDef *md = (MemberDef*)d;
+      // QCString s;
+      // ClassDef *cl = md->getClassDef();
+      // if(cl)
+      //   s = cl->name();
+      // QCString s1 = VerilogDocGen::convertTypeToString(md->getMemberSpecifiers());
+      // decl = s1 + " ";
+      // QCString unk = md->declaration();
+      // VerilogDocGen::adjustOpName(unk);
+      // VerilogDocGen::adjustMemberName(md);
+      // decl += unk;
+      // if(cl)
+      //   docInfo.name = s + "::" + md->name();
+      // TODO: - Tang - Not sure what the point of this is
+      // if (!decl.isEmpty() && decl.at(0)=='@') // hide enum values
+      
+      //printf("%p: writeTooltips(%s) ol=%d\n",this,qPrint(name),ol.id());
+      DocLinkInfo docInfo;
+      docInfo.name   = d->qualifiedName();
+      docInfo.ref    = d->getReference();
+      docInfo.url    = d->getOutputFileBase();
+      docInfo.anchor = d->anchor();
+      SourceLinkInfo defInfo;
+      if (d->getBodyDef() && d->getStartBodyLine()!=-1)
+      {
+        defInfo.file    = d->getBodyDef()->name();
+        defInfo.line    = d->getStartBodyLine();
+        defInfo.url     = d->getSourceFileBase();
+        defInfo.anchor  = d->getSourceAnchor();
+      }
+      SourceLinkInfo declInfo; // TODO: fill in...
+      QCString decl;
+      if (d->definitionType()==Definition::TypeMember)
+      {
+        const MemberDef *md = toMemberDef(d);
+        if (!md->isAnonymous())
+        {
+          decl = md->declaration();
+        }
+      }
+      // VerilogDocGen::adjustOpName(decl); // TODO: - Tang - Figure out this critical section
+      ol.writeTooltip(name,                // id
+          docInfo,                         // symName
+          decl,                            // decl
+          d->briefDescriptionAsTooltip(),  // desc
+          defInfo,
+          declInfo
+          );
+    }
   }
 }
 

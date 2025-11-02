@@ -13,4 +13,17 @@
 
 /doxygen_docs
 /doxygen.tag
-/build
+/build*
+/qtools_docs
+/warnings.log
+
+tags
+.cache/
+
+.idea
+cmake-build-debug/
+cmake-build-debug-event-trace/
+.vscode/
+
+/examples/html/*
+/examples/latex/*

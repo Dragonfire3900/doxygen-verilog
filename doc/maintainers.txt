@@ -26,6 +26,9 @@ Armen Tangamyan: armen dot tangamyan at anu dot edu dot au
 TranslatorBrazilian
 Fabio "FJTC" Jun Takada Chino: jun-chino at uol dot com dot br
 
+TranslatorBulgarian
+Kiril Kirilov: kpkirilov at abv dot bg
+
 TranslatorCatalan
 Maximiliano Pin: max dot pin at bitroit dot com
 Albert Mora: [unreachable] amora at iua dot upf dot es
@@ -50,10 +53,10 @@ Poul-Erik Hansen: pouhan at gnotometrics dot dk
 Erik Søe Sørensen: eriksoe+doxygen at daimi dot au dot dk
 
 TranslatorDutch
-Dimitri van Heesch: dimitri at stack dot nl
+Dimitri van Heesch: doxygen at gmail dot com
 
 TranslatorEnglish
-Dimitri van Heesch: dimitri at stack dot nl
+Dimitri van Heesch: doxygen at gmail dot com
 
 TranslatorEsperanto
 Ander Martínez: ander dot basaundi at gmail dot com
@@ -73,6 +76,9 @@ Jens Seidel: jensseidel at users dot sf dot net
 TranslatorGreek
 Paul Gessos: gessos dot paul at yahoo dot gr
 
+TranslatorHindi
+Harsh Rathod: hrathore50 at ymail dot com
+
 TranslatorHungarian
 Ákos Kiss: akiss at users dot sourceforge dot net
 Földvári György: [unreachable] foldvari lost at cyberspace
@@ -85,7 +91,7 @@ Alessandro Falappa: alex dot falappa at gmail dot com
 Ahmed Aldo Faisal: aaf23 at cam dot ac dot uk
 
 TranslatorJapanese
-Suzumizaki-Kimikata: szmml at h12u.com
+Suzumizaki-Kimikata: szmml at h12u dot com
 Hiroki Iseri: goyoki at gmail dot com
 Ryunosuke Satoh: sun594 at hotmail dot com
 Kenji Nagamatsu: [unreachable] naga at joyful dot club dot ne dot jp
@@ -97,7 +103,8 @@ SooYoung Jung: jung5000 at gmail dot com
 Richard Kim: [unreachable] ryk at dspwiz dot com
 
 TranslatorLatvian
-Lauris: lauris at nix.lv
+Lauris: lauris at nix dot lv
+Fedosov Artyom Dmitrievich: artjomsfedosovs2 at gmail dot com
 
 TranslatorLithuanian
 Tomas Simonaitis: [unreachable] haden at homelan dot lt
@@ -118,6 +125,7 @@ TranslatorPolish
 Piotr Kaminski: [unreachable] Piotr dot Kaminski at ctm dot gdynia dot pl
 Grzegorz Kowal: [unreachable] g_kowal at poczta dot onet dot pl
 Krzysztof Kral: krzysztof dot kral at gmail dot com
+Marek Ledworowski: mledworo at gmail dot com
 
 TranslatorPortuguese
 Rui Godinho Lopes: [resigned] rgl at ruilopes dot com
@@ -151,7 +159,7 @@ Francisco Oltra Thennet: [unreachable] foltra at puc dot cl
 David Vaquero: david at grupoikusnet dot com
 
 TranslatorSwedish
-Björn Palmqvist: bjorn.palmqvist at aidium.se
+Björn Palmqvist: bjorn dot palmqvist at aidium dot se
 
 TranslatorTurkish
 Emin Ilker Cetinbas: niw3 at yahoo dot com
@@ -162,4 +170,3 @@ Petro  Yermolenko: python at i dot ua
 
 TranslatorVietnamese
 Dang Minh Tuan: tuanvietkey at gmail dot com
-

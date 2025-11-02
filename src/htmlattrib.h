@@ -1,77 +1,86 @@
 /******************************************************************************
  *
- * 
+ *
  *
  * Copyright (C) 1997-2015 by Dimitri van Heesch.
  *
  * Permission to use, copy, modify, and distribute this software and its
- * documentation under the terms of the GNU General Public License is hereby 
- * granted. No representations are made about the suitability of this software 
+ * documentation under the terms of the GNU General Public License is hereby
+ * granted. No representations are made about the suitability of this software
  * for any purpose. It is provided "as is" without express or implied warranty.
  * See the GNU General Public License for more details.
  *
  */
 
-#ifndef _HTMLATTRIB_H
-#define _HTMLATTRIB_H
+#ifndef HTMLATTRIB_H
+#define HTMLATTRIB_H
 
-#include <qcstring.h>
-#include <qlist.h>
+#include <vector>
 
-/*! A Html option. A name, value pair */
+#include "qcstring.h"
+#include "util.h"
+
+/*! \brief Class representing a HTML attribute. */
 struct HtmlAttrib
 {
+  HtmlAttrib(const QCString &n,const QCString &v) : name(n), value(v) {}
   QCString name;
   QCString value;
 };
 
-/*! @brief A list of Html attributes. 
- *
- * The Html attributes are deeply copied into the list.
- */
-class HtmlAttribList : public QList<HtmlAttrib>
+/*! \brief Class representing a list of HTML attributes. */
+class HtmlAttribList : public std::vector<HtmlAttrib>
 {
   public:
-    HtmlAttribList() : QList<HtmlAttrib>() { setAutoDelete(TRUE); }
-   ~HtmlAttribList() { clear(); }
-    HtmlAttribList(const HtmlAttribList &l) : QList<HtmlAttrib>() 
-    { operator=(l); }
-    HtmlAttribList &operator=(const HtmlAttribList &l)
-    { clear(); QList<HtmlAttrib>::operator=(l); return *this; }
-    QCString find(const QCString name) const
+    void mergeAttribute(const QCString &optName,const QCString &optValue)
     {
-      QListIterator<HtmlAttrib> it(*this);
-      QCString result;
-      HtmlAttrib *attr;
-      for (;(attr=it.current());++it)
+      auto it = std::find_if(begin(),end(),
+                           [&optName](const auto &opt) { return opt.name==optName; });
+      if (it!=end()) // attribute name already in the list: append values
       {
-        if (attr->name==name) return attr->value;
+        it->value += " " + optValue;
       }
-      return result;
-    }
-    QCString toString() const
-    {
-      QListIterator<HtmlAttrib> it(*this);
-      QCString result;
-      HtmlAttrib *attr;
-      for (;(attr=it.current());++it)
+      else // attribute name not yet in the list
       {
-        result+=" "+attr->name+"=\""+attr->value+"\"";
+        emplace_back(optName,optValue);
       }
-      return result;
     }
-  private:
-    HtmlAttrib *newValue( HtmlAttrib *v ) const
-    { return new HtmlAttrib(*v); }
-    void deleteValue(HtmlAttrib *v) const
-    { delete v;  }
-};
 
-/*! @brief Html attribute list iterator */
-class HtmlAttribListIterator : public QListIterator<HtmlAttrib>
-{
-  public:
-    HtmlAttribListIterator(const HtmlAttribList &l) : QListIterator<HtmlAttrib>(l) {}
+    QCString toString(QCString *pAltValue = nullptr) const
+    {
+      QCString result;
+      for (const auto &att : *this)
+      {
+        if (!att.value.isEmpty())  // ignore attribute without values as they
+                                   // are not XHTML compliant, with the exception
+                                   // of the alt attribute with the img tag
+        {
+          if (att.name=="alt" && pAltValue) // optionally return the value of alt separately
+                                            // need to convert <img> to <object> for SVG images,
+                                            // which do not support the alt attribute
+          {
+            *pAltValue = att.value;
+          }
+          else
+          {
+            result+=" "+att.name+"=\""+convertToXML(att.value)+"\"";
+          }
+        }
+        else if (att.name=="open")
+        {
+          // The open attribute is a boolean attribute.
+          // Specifies that the details should be visible (open) to the user
+          // As it is a boolean attribute the initialization value is of no interest
+          result+=" "+att.name+"=\"true\"";
+        }
+        else if (att.name=="nowrap") // In XHTML, attribute minimization is forbidden, and the nowrap attribute must be defined as <td nowrap="nowrap">.
+        {
+          result+=" "+att.name+"=\"nowrap\"";
+        }
+      }
+      return result;
+    }
+
 };
 
 #endif
